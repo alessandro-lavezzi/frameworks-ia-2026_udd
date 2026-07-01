@@ -1,0 +1,4 @@
+.venv/
+
+# Carpetas de imágenes (dataset UTKFace y derivados) — demasiado pesadas para git
+UTKFace_data/
