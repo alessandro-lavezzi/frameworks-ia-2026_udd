@@ -172,26 +172,19 @@ Versión que se reutiliza en el notebook de Grad-CAM.
 
 ### 5️⃣ `heatmap_gradcam.ipynb` — Interpretabilidad (Grad-CAM)
 Notebook **independiente y de cierre**. Aplica **Grad-CAM** sobre la CNN (en PyTorch y en Keras)
-para visualizar **en qué zona del rostro se fija el modelo** al predecir la edad. Las zonas rojas
-del mapa de calor son las más influyentes; lo ideal es que se concentren en rasgos faciales
-(ojos, frente, mejillas) y no en el fondo. Reutiliza el pipeline balanceado del 4º análisis.
+para visualizar **en qué zona del rostro se fija el modelo** al predecir la edad. Las zonas rojas del mapa de calor son las más influyentes; lo ideal es que se concentren en rasgos faciales (ojos, frente, mejillas) y no en el fondo. Reutiliza el pipeline balanceado del 4º análisis.
 
 ---
 
 ## 7. Carpetas y archivos adicionales
 
-- **`fotos_prueba/`** — Imágenes sueltas (algunas de UTKFace y otras propias) para probar los
-  modelos con casos fuera del set de entrenamiento.
-- **`Lab 1/`** — Laboratorio introductorio del ramo (clasificador "is that Santa"), no forma
-  parte del proyecto principal de edades.
+- **`fotos_prueba/`** — Imágenes sueltas (algunas de UTKFace y otras propias) para probar los  modelos con casos fuera del set de entrenamiento.
+- **`Lab 1/`** — Laboratorio introductorio del ramo (clasificador "is that Santa"), no forma parte del proyecto principal de edades.
 
 ---
 
 ## 8. Notas y solución de problemas
 
-- **`FileNotFoundError` / no encuentra imágenes:** revisa que las imágenes estén exactamente en
-  `UTKFace_data/UTKFace/` y que ejecutes los notebooks desde la raíz del repositorio.
-- **La primera ejecución es lenta:** es normal, TensorFlow y PyTorch tardan en importar y el
-  entrenamiento por CPU toma su tiempo.
-- **Kernel de Jupyter:** asegúrate de seleccionar el intérprete del entorno virtual `.venv`,
-  no el Python global, para que use las dependencias instaladas.
+- **`FileNotFoundError` / no encuentra imágenes:** revisa que las imágenes estén exactamente en  `UTKFace_data/UTKFace/` y que ejecutes los notebooks desde la raíz del repositorio.
+- **La primera ejecución es lenta:** es normal, TensorFlow y PyTorch tardan en importar y el  entrenamiento por CPU toma su tiempo.
+- **Kernel de Jupyter:** asegúrate de seleccionar el intérprete del entorno virtual `.venv`,  no el Python global, para que use las dependencias instaladas.
