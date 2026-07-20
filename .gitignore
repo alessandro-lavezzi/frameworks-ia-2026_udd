@@ -3,3 +3,8 @@
 # Carpetas de imágenes (dataset UTKFace y derivados) — demasiado pesadas para git
 UTKFace_data/
 UTKFace_data.zip
+
+# Modelos entrenados (se regeneran con los scripts de entrenamiento)
+models/
+
+CLAUDE.md
