@@ -11,7 +11,9 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 # --- Configuración general (compartida por todos los scripts) ---
-DATA_DIR = "./UTKFace_data/UTKFace"
+# Absoluta y relativa a este archivo: así funciona sin importar desde qué carpeta se ejecute
+# (por ejemplo, cuando pytorch/train_pytorch.py importa DATA_DIR corriendo desde la raíz).
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UTKFace_data", "UTKFace")
 IMG_SIZE = 64
 BATCH_SIZE = 32
 SEED = 42

@@ -1,3 +1,6 @@
+# Dependencia de sistema (no instalable con pip): python3-tk
+# Necesaria para que matplotlib pueda mostrar ventanas (plt.show()) en vez de caer al backend
+# no interactivo Agg. Instalar con: sudo apt install python3-tk
 tensorflow>=2.13.0
 torch>=2.1.0
 torchvision>=0.16.0
