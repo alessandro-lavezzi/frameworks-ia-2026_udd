@@ -43,7 +43,7 @@ def cargar_modelo_pt():
         with torch.no_grad():
             return torch.softmax(model(x), dim=1)[0].numpy()
 
-    # Grad-CAM engancha (hooks) la ULTIMA capa convolucional (conv3): usa los gradientes de la
+    # Grad-CAM engancha (hooks) la ULTIMA capa convolucional (conv4): usa los gradientes de la
     # clase predicha que llegan a esa capa para ponderar sus mapas de activación.
     activations, gradients = {}, {}
 
@@ -53,8 +53,8 @@ def cargar_modelo_pt():
     def _save_gradient(module, grad_in, grad_out):
         gradients["value"] = grad_out[0].detach()
 
-    model.conv3.register_forward_hook(_save_activation)
-    model.conv3.register_full_backward_hook(_save_gradient)
+    model.conv4.register_forward_hook(_save_activation)
+    model.conv4.register_full_backward_hook(_save_gradient)
 
     def gradcam(img_pil):
         x = transform(img_pil).unsqueeze(0)
