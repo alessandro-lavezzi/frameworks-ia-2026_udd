@@ -23,22 +23,45 @@ def load_and_preprocess(filepath, label):
     return img, label
 
 
-def make_tf_dataset(dataframe, shuffle=False):
+# Augmentation definida ANTES de armar el dataset generator (ver "Lecciones aprendidas" en
+# CLAUDE.md): flip horizontal y jitter leve tienen sentido en rostros; rotación acotada (~10°)
+# para no distorsionar rasgos de los que depende la edad. Solo se aplica al set de entrenamiento.
+augmentacion = tf.keras.Sequential([
+    tf.keras.layers.RandomFlip("horizontal"),
+    tf.keras.layers.RandomRotation(0.03),
+    tf.keras.layers.RandomContrast(0.2),
+], name="augmentacion")
+
+
+def make_tf_dataset(dataframe, shuffle=False, augment=False):
     ds = tf.data.Dataset.from_tensor_slices((dataframe["filepath"].values, dataframe["label"].values))
     ds = ds.map(load_and_preprocess, num_parallel_calls=tf.data.AUTOTUNE)
     if shuffle:
         ds = ds.shuffle(buffer_size=len(dataframe), seed=SEED)
-    return ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+    ds = ds.batch(BATCH_SIZE)
+    if augment:
+        ds = ds.map(lambda x, y: (augmentacion(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
+    return ds.prefetch(tf.data.AUTOTUNE)
 
 
 def build_model():
     model = tf.keras.Sequential([
         tf.keras.layers.Input(shape=(IMG_SIZE, IMG_SIZE, 3)),
-        tf.keras.layers.Conv2D(16, 3, padding="same", activation="relu"),
+        tf.keras.layers.Conv2D(16, 3, padding="same", use_bias=False),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Activation("relu"),
         tf.keras.layers.MaxPooling2D(),
-        tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu"),
+        tf.keras.layers.Conv2D(32, 3, padding="same", use_bias=False),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Activation("relu"),
         tf.keras.layers.MaxPooling2D(),
-        tf.keras.layers.Conv2D(64, 3, padding="same", activation="relu"),
+        tf.keras.layers.Conv2D(64, 3, padding="same", use_bias=False),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Activation("relu"),
+        tf.keras.layers.MaxPooling2D(),
+        tf.keras.layers.Conv2D(128, 3, padding="same", use_bias=False),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Activation("relu"),
         tf.keras.layers.MaxPooling2D(),
         tf.keras.layers.Flatten(),
         tf.keras.layers.Dense(128, activation="relu"),
@@ -57,7 +80,7 @@ def main():
     train_df, val_df, test_df = get_splits(build_dataframe())
     print(f"Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
 
-    train_ds = make_tf_dataset(train_df, shuffle=True)
+    train_ds = make_tf_dataset(train_df, shuffle=True, augment=True)
     val_ds = make_tf_dataset(val_df)
     test_ds = make_tf_dataset(test_df)
 

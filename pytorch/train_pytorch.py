@@ -21,9 +21,23 @@ EPOCHS = 10
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Mismo preprocesamiento en entrenamiento e inferencia.
+# `transform`: preprocesamiento base, sin augmentation. Se usa en val/test y también es el que
+# importan infer.py y opencv.py para inferencia (ahí no queremos aleatoriedad).
 transform = T.Compose([
     T.Resize((IMG_SIZE, IMG_SIZE)),
+    T.ToTensor(),
+    T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+])
+
+# `train_transform`: solo para entrenamiento. El augmentation va ANTES de ToTensor/Normalize
+# para que las transformaciones geométricas y de color actúen sobre la imagen PIL original.
+# Flip horizontal y jitter leve tienen sentido en rostros; rotación se deja acotada (10°) para
+# no distorsionar rasgos de los que depende la edad (arrugas, mentón, etc.).
+train_transform = T.Compose([
+    T.Resize((IMG_SIZE, IMG_SIZE)),
+    T.RandomHorizontalFlip(p=0.5),
+    T.RandomRotation(degrees=10),
+    T.ColorJitter(brightness=0.2, contrast=0.2),
     T.ToTensor(),
     T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
 ])
@@ -48,19 +62,25 @@ class UTKFaceDataset(Dataset):
 class AgeCNN(nn.Module):
     def __init__(self, num_classes=5):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(32)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(64)
+        self.conv4 = nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=False)
+        self.bn4 = nn.BatchNorm2d(128)
         self.pool = nn.MaxPool2d(2, 2)
-        # IMG_SIZE=64 -> tras 3 poolings /2: 64 -> 32 -> 16 -> 8
-        self.fc1 = nn.Linear(64 * 8 * 8, 128)
+        # IMG_SIZE=64 -> tras 4 poolings /2: 64 -> 32 -> 16 -> 8 -> 4
+        self.fc1 = nn.Linear(128 * 4 * 4, 128)
         self.fc2 = nn.Linear(128, num_classes)
         self.dropout = nn.Dropout(0.3)
 
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = self.pool(F.relu(self.conv3(x)))
+        x = self.pool(F.relu(self.bn1(self.conv1(x))))
+        x = self.pool(F.relu(self.bn2(self.conv2(x))))
+        x = self.pool(F.relu(self.bn3(self.conv3(x))))
+        x = self.pool(F.relu(self.bn4(self.conv4(x))))
         x = x.view(x.size(0), -1)
         x = self.dropout(F.relu(self.fc1(x)))
         return self.fc2(x)
@@ -90,7 +110,7 @@ def main():
     train_df, val_df, test_df = get_splits(build_dataframe())
     print(f"Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
 
-    train_loader = DataLoader(UTKFaceDataset(train_df, transform), batch_size=BATCH_SIZE, shuffle=True)
+    train_loader = DataLoader(UTKFaceDataset(train_df, train_transform), batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(UTKFaceDataset(val_df, transform), batch_size=BATCH_SIZE, shuffle=False)
     test_loader = DataLoader(UTKFaceDataset(test_df, transform), batch_size=BATCH_SIZE, shuffle=False)
 
