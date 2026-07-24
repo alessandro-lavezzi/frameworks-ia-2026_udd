@@ -1,7 +1,14 @@
-"""Entrenamiento y evaluación del clasificador de edad en TensorFlow/Keras. Guarda el modelo para inferencia."""
+"""Entrenamiento y evaluación del clasificador de edad en TensorFlow/Keras. Guarda el modelo para inferencia.
+
+--etnia selecciona el subset de entrenamiento (white/black/asian/indian/all). El undersampling
+sigue siendo por sexo en todos los casos (ver data/dataset.py); la etnia solo filtra qué imágenes
+entran. Con 'all' (default) se entrena con todas las etnias juntas, para comparar contra las
+corridas por etnia individual.
+"""
 import os
 import sys
 import time
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -9,10 +16,18 @@ from sklearn.preprocessing import label_binarize
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from data.dataset import IMG_SIZE, BATCH_SIZE, SEED, CLASS_NAMES, build_dataframe, get_splits
+from data.dataset import IMG_SIZE, BATCH_SIZE, SEED, CLASS_NAMES, ETNIAS_DISPONIBLES, build_dataframe, get_splits
 
-MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "age_cnn_keras.keras")
+MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
 EPOCHS = 10
+
+
+def get_model_path(etnia: str) -> str:
+    # 'all' conserva el nombre histórico (age_cnn_keras.keras) para no romper demo/infer.py,
+    # que por defecto usa el modelo combinado. Las corridas por etnia van con sufijo aparte.
+    if etnia.lower() == "all":
+        return os.path.join(MODELS_DIR, "age_cnn_keras.keras")
+    return os.path.join(MODELS_DIR, f"age_cnn_keras_{etnia.lower()}.keras")
 
 
 def load_and_preprocess(filepath, label):
@@ -76,9 +91,9 @@ def build_model():
     return model
 
 
-def main():
-    train_df, val_df, test_df = get_splits(build_dataframe())
-    print(f"Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
+def main(etnia: str = "all"):
+    train_df, val_df, test_df = get_splits(build_dataframe(etnia=etnia))
+    print(f"Etnia: {etnia} | Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
 
     train_ds = make_tf_dataset(train_df, shuffle=True, augment=True)
     val_ds = make_tf_dataset(val_df)
@@ -111,7 +126,7 @@ def main():
 
     print(classification_report(y_true, y_pred, target_names=CLASS_NAMES))
     ConfusionMatrixDisplay(confusion_matrix(y_true, y_pred), display_labels=CLASS_NAMES).plot()
-    plt.title("Matriz de confusión — TensorFlow/Keras")
+    plt.title(f"Matriz de confusión — TensorFlow/Keras (etnia: {etnia})")
     plt.show()
 
     # Curva ROC multiclase One-vs-Rest + micro-promedio.
@@ -127,15 +142,20 @@ def main():
     plt.xlim([0, 1]); plt.ylim([0, 1.02])
     plt.xlabel("Tasa de falsos positivos (FPR)")
     plt.ylabel("Tasa de verdaderos positivos (TPR)")
-    plt.title("Curva ROC multiclase — TensorFlow/Keras")
+    plt.title(f"Curva ROC multiclase — TensorFlow/Keras (etnia: {etnia})")
     plt.legend(loc="lower right", fontsize=8)
     plt.tight_layout()
     plt.show()
 
-    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-    model.save(MODEL_PATH)
-    print(f"Modelo guardado en: {MODEL_PATH}")
+    model_path = get_model_path(etnia)
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    model.save(model_path)
+    print(f"Modelo guardado en: {model_path}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Entrena el clasificador de edad (Keras) para una etnia (o todas).")
+    parser.add_argument("--etnia", default="all", choices=[e.lower() for e in ETNIAS_DISPONIBLES],
+                         help="Etnia a usar, o 'all' para todas juntas (default: all).")
+    args = parser.parse_args()
+    main(etnia=args.etnia)

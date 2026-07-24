@@ -1,9 +1,13 @@
 """Corre el pipeline completo del proyecto en orden: dataset -> entrenamiento -> inferencia.
 
 1. data/dataset.py           - construye y verifica el dataset balanceado (gráficos de distribución)
-2. pytorch/train_pytorch.py  - entrena y evalúa el modelo en PyTorch, guarda models/age_cnn_pytorch.pt
-3. tensorflow/train_tensorflow.py - entrena y evalúa el modelo en Keras, guarda models/age_cnn_keras.keras
-4. demo/infer.py             - inferencia + Grad-CAM sobre las fotos en fotos_prueba/
+2. pytorch/train_pytorch.py  - entrena y evalúa, por etnia, guarda models/age_cnn_pytorch[_<etnia>].pt
+3. tensorflow/train_tensorflow.py - ídem en Keras, models/age_cnn_keras[_<etnia>].keras
+4. demo/infer.py             - inferencia + Grad-CAM sobre las fotos en fotos_prueba/ (usa el modelo 'all')
+
+Los pasos 2 y 3 se repiten una vez por etnia (ETNIAS_DISPONIBLES en data/dataset.py: cada etnia
+individual + 'all' con todas juntas, para comparar). El undersampling dentro de cada corrida es
+por sexo, no por etnia -- ver data/dataset.py.
 
 Cada paso corre como proceso independiente (mismo comportamiento que ejecutarlo a mano).
 Los gráficos de matplotlib de cada script se muestran igual que por separado: hay que
@@ -15,25 +19,39 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+from data.dataset import ETNIAS_DISPONIBLES
 
-PASOS = [
-    ("1/4 Dataset (verificación de balanceo)", ROOT / "data" / "dataset.py"),
-    ("2/4 Entrenamiento PyTorch", ROOT / "pytorch" / "train_pytorch.py"),
-    ("3/4 Entrenamiento TensorFlow/Keras", ROOT / "tensorflow" / "train_tensorflow.py"),
-    ("4/4 Inferencia + Grad-CAM (demo)", ROOT / "demo" / "infer.py"),
+PASOS_FIJOS_INICIO = [
+    ("Dataset (verificación de balanceo)", ROOT / "data" / "dataset.py", []),
+]
+PASOS_FIJOS_FIN = [
+    ("Inferencia + Grad-CAM (demo)", ROOT / "demo" / "infer.py", []),
 ]
 
 
+def pasos_de_entrenamiento():
+    pasos = []
+    for etnia in ETNIAS_DISPONIBLES:
+        pasos.append((f"Entrenamiento PyTorch (etnia={etnia})", ROOT / "pytorch" / "train_pytorch.py",
+                       ["--etnia", etnia.lower()]))
+        pasos.append((f"Entrenamiento TensorFlow/Keras (etnia={etnia})", ROOT / "tensorflow" / "train_tensorflow.py",
+                       ["--etnia", etnia.lower()]))
+    return pasos
+
+
 def main():
-    for nombre, script in PASOS:
+    pasos = PASOS_FIJOS_INICIO + pasos_de_entrenamiento() + PASOS_FIJOS_FIN
+    total = len(pasos)
+    for i, (nombre, script, args) in enumerate(pasos, start=1):
         print("\n" + "=" * 60)
-        print(f"PASO {nombre}  ({script.relative_to(ROOT)})")
+        print(f"PASO {i}/{total}: {nombre}  ({script.relative_to(ROOT)})")
         print("=" * 60)
-        resultado = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+        resultado = subprocess.run([sys.executable, str(script), *args], cwd=ROOT)
         if resultado.returncode != 0:
             print(f"\n'{nombre}' terminó con error (código {resultado.returncode}). Pipeline detenido.")
             sys.exit(resultado.returncode)
-    print("\nPipeline completo: dataset -> PyTorch -> Keras -> inferencia/demo.")
+    print(f"\nPipeline completo: dataset -> PyTorch/Keras x {len(ETNIAS_DISPONIBLES)} etnias -> inferencia/demo.")
 
 
 if __name__ == "__main__":
