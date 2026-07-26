@@ -20,6 +20,8 @@ from sklearn.model_selection import train_test_split
 # Absoluta y relativa a este archivo: así funciona sin importar desde qué carpeta se ejecute
 # (por ejemplo, cuando pytorch/train_pytorch.py importa DATA_DIR corriendo desde la raíz).
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UTKFace_data", "UTKFace")
+# Carpeta donde los scripts guardan sus gráficos (savefig) en vez de abrir ventanas interactivas.
+FIGURAS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "figuras")
 IMG_SIZE = 64
 BATCH_SIZE = 32
 SEED = 42
@@ -145,6 +147,7 @@ if __name__ == "__main__":
                          help="Etnia a usar, o 'all' para todas juntas (default: all).")
     args = parser.parse_args()
 
+    os.makedirs(FIGURAS_DIR, exist_ok=True)
     df = build_dataframe(etnia=args.etnia)
 
     # Distribución de clases (balanceada -> barras del mismo alto).
@@ -153,7 +156,10 @@ if __name__ == "__main__":
     plt.bar(CLASS_NAMES, counts.values)
     plt.title(f"Distribución de clases (balanceada por edad y sexo) — etnia: {args.etnia}")
     plt.ylabel("N° de imágenes")
-    plt.show()
+    plt.tight_layout()
+    # plt.show()  # desactivado en esta corrida: se guarda en figuras/ para no bloquear el pipeline
+    plt.savefig(os.path.join(FIGURAS_DIR, f"dataset_distribucion_{args.etnia}.png"), dpi=120)
+    plt.close()
 
     # Composición por sexo por segmento (debe salir perfectamente pareja: es la dimensión balanceada).
     tab = (
@@ -170,4 +176,6 @@ if __name__ == "__main__":
     ax.set_xlabel("Segmento etario")
     ax.legend(title="Sexo", bbox_to_anchor=(1.01, 1), loc="upper left")
     plt.tight_layout()
-    plt.show()
+    # plt.show()  # desactivado en esta corrida: se guarda en figuras/ para no bloquear el pipeline
+    plt.savefig(os.path.join(FIGURAS_DIR, f"dataset_composicion_sexo_{args.etnia}.png"), dpi=120)
+    plt.close()

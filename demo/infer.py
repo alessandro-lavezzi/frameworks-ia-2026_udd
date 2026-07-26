@@ -15,7 +15,7 @@ from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from data.dataset import IMG_SIZE, CLASS_NAMES
+from data.dataset import IMG_SIZE, CLASS_NAMES, FIGURAS_DIR
 
 FOTOS_PRUEBA = os.path.join(ROOT, "fotos_prueba")
 PT_MODEL_PATH = os.path.join(ROOT, "models", "age_cnn_pytorch.pt")
@@ -32,9 +32,13 @@ def cargar_modelo_pt():
         return None, None
     import torch
     import torch.nn.functional as F
-    from pytorch.train_pytorch import AgeCNN, transform  # misma arquitectura y preprocesamiento
+    # misma arquitectura, preprocesamiento e hiperparámetros que en entrenamiento: la arquitectura
+    # PyTorch (nº de bloques/canales) depende de los hparams de Optuna, así que hay que reconstruirla
+    # con la misma fuente (load_hparams: JSON de Optuna, o fallback) o el state_dict no calza.
+    from pytorch.train_pytorch import AgeCNN, transform, load_hparams, channels_from_hparams
 
-    model = AgeCNN(num_classes=len(CLASS_NAMES))
+    hp = load_hparams()
+    model = AgeCNN(num_classes=len(CLASS_NAMES), channels=channels_from_hparams(hp))
     model.load_state_dict(torch.load(PT_MODEL_PATH, map_location="cpu"))
     model.eval()
 
@@ -43,8 +47,9 @@ def cargar_modelo_pt():
         with torch.no_grad():
             return torch.softmax(model(x), dim=1)[0].numpy()
 
-    # Grad-CAM engancha (hooks) la ULTIMA capa convolucional (conv4): usa los gradientes de la
-    # clase predicha que llegan a esa capa para ponderar sus mapas de activación.
+    # Grad-CAM engancha (hooks) la ULTIMA capa convolucional (model.last_conv, expuesta por AgeCNN
+    # porque el nombre/nº de capas ahora lo define Optuna): usa los gradientes de la clase predicha
+    # que llegan a esa capa para ponderar sus mapas de activación.
     activations, gradients = {}, {}
 
     def _save_activation(module, inp, out):
@@ -53,8 +58,8 @@ def cargar_modelo_pt():
     def _save_gradient(module, grad_in, grad_out):
         gradients["value"] = grad_out[0].detach()
 
-    model.conv4.register_forward_hook(_save_activation)
-    model.conv4.register_full_backward_hook(_save_gradient)
+    model.last_conv.register_forward_hook(_save_activation)
+    model.last_conv.register_full_backward_hook(_save_gradient)
 
     def gradcam(img_pil):
         x = transform(img_pil).unsqueeze(0)
@@ -184,7 +189,10 @@ def main():
             axes[i, j].axis("off")
 
     plt.tight_layout()
-    plt.show()
+    # plt.show()  # desactivado en esta corrida: se guarda en figuras/ para no bloquear el pipeline
+    os.makedirs(FIGURAS_DIR, exist_ok=True)
+    plt.savefig(os.path.join(FIGURAS_DIR, "inferencia_gradcam.png"), dpi=120)
+    plt.close()
 
 
 if __name__ == "__main__":
