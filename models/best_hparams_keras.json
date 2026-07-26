@@ -1,0 +1,5 @@
+{
+  "n_conv_layers": 2,
+  "base_channels": 16,
+  "lr": 0.0002880345768063458
+}
