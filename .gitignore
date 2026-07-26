@@ -7,4 +7,5 @@ UTKFace_data.zip
 # Modelos entrenados (se regeneran con los scripts de entrenamiento)
 models/
 
-CLAUDE.md
+CLAUDE.md__pycache__/
+*.pyc
