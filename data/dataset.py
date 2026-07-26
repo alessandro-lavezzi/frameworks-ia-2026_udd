@@ -123,3 +123,6 @@ if __name__ == "__main__":
     ax.legend(title="Etnia", bbox_to_anchor=(1.01, 1), loc="upper left")
     plt.tight_layout()
     plt.show()
+
+
+
