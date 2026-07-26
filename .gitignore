@@ -16,3 +16,7 @@ models/*
 
 CLAUDE.md
 figuras/
+
+__pycache__/
+*.pyc
+*.pyo
