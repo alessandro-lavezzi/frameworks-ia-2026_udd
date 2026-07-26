@@ -7,6 +7,7 @@ corridas por etnia individual.
 """
 import os
 import sys
+import json
 import time
 import argparse
 import numpy as np
@@ -21,10 +22,39 @@ from sklearn.preprocessing import label_binarize
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from data.dataset import IMG_SIZE, BATCH_SIZE, CLASS_NAMES, ETNIAS_DISPONIBLES, build_dataframe, get_splits
+from data.dataset import IMG_SIZE, BATCH_SIZE, CLASS_NAMES, ETNIAS_DISPONIBLES, FIGURAS_DIR, build_dataframe, get_splits
 
 MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
+HPARAMS_PATH = os.path.join(MODELS_DIR, "best_hparams_pytorch.json")
 EPOCHS = 10
+
+# Hiperparámetros: el entrenamiento lee por defecto models/best_hparams_pytorch.json (lo que deja
+# Optuna, versionado en git). Si el JSON no existe, cae a estos valores hardcodeados de respaldo,
+# que provienen de la última búsqueda de Optuna (ver HIPERPARAMETROS.md). Así el flujo normal usa
+# siempre el resultado de Optuna, pero el script no se rompe si falta el archivo.
+HPARAMS_FALLBACK = {
+    "n_conv_layers": 3,               # origen: optuna
+    "base_channels": 16,              # origen: optuna
+    "lr": 0.00028898883555273204,     # origen: optuna
+}
+
+
+def load_hparams(verbose: bool = False) -> dict:
+    """Hiperparámetros a usar: el JSON de Optuna si existe, si no el fallback hardcodeado."""
+    hp = dict(HPARAMS_FALLBACK)
+    if os.path.exists(HPARAMS_PATH):
+        with open(HPARAMS_PATH) as f:
+            hp.update(json.load(f))
+        if verbose:
+            print(f"Hiperparámetros desde Optuna ({os.path.basename(HPARAMS_PATH)}): {hp}")
+    elif verbose:
+        print(f"Sin JSON de Optuna; uso fallback hardcodeado: {hp}")
+    return hp
+
+
+def channels_from_hparams(hp: dict) -> list:
+    """Deriva la lista de canales por bloque conv: crecen x2 desde base_channels, tope 256."""
+    return [min(hp["base_channels"] * (2 ** i), 256) for i in range(hp["n_conv_layers"])]
 
 
 def get_model_path(etnia: str) -> str:
@@ -75,28 +105,42 @@ class UTKFaceDataset(Dataset):
 
 
 class AgeCNN(nn.Module):
-    def __init__(self, num_classes=5):
+    """CNN con N bloques conv configurables (canales por bloque). La arquitectura la determinan
+    los hiperparámetros de Optuna vía `channels`; sin argumentos reproduce la original (16,32,64,128).
+
+    `self.last_conv` apunta a la última capa Conv2d, para que Grad-CAM (demo/infer.py) enganche
+    ahí sin depender de un nombre fijo como 'conv4'.
+    """
+
+    def __init__(self, num_classes=len(CLASS_NAMES), channels=None, dropout=0.3):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(32)
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1, bias=False)
-        self.bn3 = nn.BatchNorm2d(64)
-        self.conv4 = nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=False)
-        self.bn4 = nn.BatchNorm2d(128)
-        self.pool = nn.MaxPool2d(2, 2)
-        # IMG_SIZE=64 -> tras 4 poolings /2: 64 -> 32 -> 16 -> 8 -> 4
-        self.fc1 = nn.Linear(128 * 4 * 4, 128)
+        channels = channels if channels is not None else [16, 32, 64, 128]
+        blocks = []
+        self.last_conv = None
+        in_ch = 3
+        for out_ch in channels:
+            conv = nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, bias=False)
+            self.last_conv = conv
+            blocks.append(nn.Sequential(
+                conv,
+                nn.BatchNorm2d(out_ch),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(2, 2),
+            ))
+            in_ch = out_ch
+        self.blocks = nn.ModuleList(blocks)
+
+        spatial = IMG_SIZE // (2 ** len(channels))
+        if spatial < 1:
+            raise ValueError(f"Demasiados bloques conv para IMG_SIZE={IMG_SIZE}: el mapa de features llega a 0.")
+        self.fc1 = nn.Linear(in_ch * spatial * spatial, 128)
         self.fc2 = nn.Linear(128, num_classes)
-        self.dropout = nn.Dropout(0.3)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        x = self.pool(F.relu(self.bn1(self.conv1(x))))
-        x = self.pool(F.relu(self.bn2(self.conv2(x))))
-        x = self.pool(F.relu(self.bn3(self.conv3(x))))
-        x = self.pool(F.relu(self.bn4(self.conv4(x))))
-        x = x.view(x.size(0), -1)
+        for block in self.blocks:
+            x = block(x)
+        x = x.flatten(1)
         x = self.dropout(F.relu(self.fc1(x)))
         return self.fc2(x)
 
@@ -129,9 +173,10 @@ def main(etnia: str = "all"):
     val_loader = DataLoader(UTKFaceDataset(val_df, transform), batch_size=BATCH_SIZE, shuffle=False)
     test_loader = DataLoader(UTKFaceDataset(test_df, transform), batch_size=BATCH_SIZE, shuffle=False)
 
-    model = AgeCNN(num_classes=len(CLASS_NAMES)).to(device)
+    hp = load_hparams(verbose=True)
+    model = AgeCNN(num_classes=len(CLASS_NAMES), channels=channels_from_hparams(hp)).to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(model.parameters(), lr=hp["lr"])
 
     t0 = time.time()
     for epoch in range(EPOCHS):
@@ -152,10 +197,14 @@ def main(etnia: str = "all"):
     probs, y_true = np.array(probs), np.array(y_true)
     y_pred = probs.argmax(1)
 
+    os.makedirs(FIGURAS_DIR, exist_ok=True)
     print(classification_report(y_true, y_pred, target_names=CLASS_NAMES))
     ConfusionMatrixDisplay(confusion_matrix(y_true, y_pred), display_labels=CLASS_NAMES).plot()
     plt.title(f"Matriz de confusión — PyTorch (etnia: {etnia})")
-    plt.show()
+    plt.tight_layout()
+    # plt.show()  # desactivado en esta corrida: se guarda en figuras/ para no bloquear el pipeline
+    plt.savefig(os.path.join(FIGURAS_DIR, f"pytorch_confusion_{etnia}.png"), dpi=120)
+    plt.close()
 
     # Curva ROC multiclase One-vs-Rest + micro-promedio.
     n_classes = len(CLASS_NAMES)
@@ -173,7 +222,9 @@ def main(etnia: str = "all"):
     plt.title(f"Curva ROC multiclase — PyTorch (etnia: {etnia})")
     plt.legend(loc="lower right", fontsize=8)
     plt.tight_layout()
-    plt.show()
+    # plt.show()  # desactivado en esta corrida: se guarda en figuras/ para no bloquear el pipeline
+    plt.savefig(os.path.join(FIGURAS_DIR, f"pytorch_roc_{etnia}.png"), dpi=120)
+    plt.close()
 
     model_path = get_model_path(etnia)
     os.makedirs(os.path.dirname(model_path), exist_ok=True)

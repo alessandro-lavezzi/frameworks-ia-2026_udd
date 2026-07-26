@@ -7,6 +7,7 @@ corridas por etnia individual.
 """
 import os
 import sys
+import json
 import time
 import argparse
 import numpy as np
@@ -16,10 +17,39 @@ from sklearn.preprocessing import label_binarize
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from data.dataset import IMG_SIZE, BATCH_SIZE, SEED, CLASS_NAMES, ETNIAS_DISPONIBLES, build_dataframe, get_splits
+from data.dataset import IMG_SIZE, BATCH_SIZE, SEED, CLASS_NAMES, ETNIAS_DISPONIBLES, FIGURAS_DIR, build_dataframe, get_splits
 
 MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
+HPARAMS_PATH = os.path.join(MODELS_DIR, "best_hparams_keras.json")
 EPOCHS = 10
+
+# Hiperparámetros: el entrenamiento lee por defecto models/best_hparams_keras.json (lo que deja
+# Optuna, versionado en git). Si el JSON no existe, cae a estos valores hardcodeados de respaldo,
+# que provienen de la última búsqueda de Optuna (ver HIPERPARAMETROS.md). Así el flujo normal usa
+# siempre el resultado de Optuna, pero el script no se rompe si falta el archivo.
+HPARAMS_FALLBACK = {
+    "n_conv_layers": 2,               # origen: optuna
+    "base_channels": 16,              # origen: optuna
+    "lr": 0.0002880345768063458,      # origen: optuna
+}
+
+
+def load_hparams(verbose: bool = False) -> dict:
+    """Hiperparámetros a usar: el JSON de Optuna si existe, si no el fallback hardcodeado."""
+    hp = dict(HPARAMS_FALLBACK)
+    if os.path.exists(HPARAMS_PATH):
+        with open(HPARAMS_PATH) as f:
+            hp.update(json.load(f))
+        if verbose:
+            print(f"Hiperparámetros desde Optuna ({os.path.basename(HPARAMS_PATH)}): {hp}")
+    elif verbose:
+        print(f"Sin JSON de Optuna; uso fallback hardcodeado: {hp}")
+    return hp
+
+
+def channels_from_hparams(hp: dict) -> list:
+    """Deriva la lista de canales por bloque conv: crecen x2 desde base_channels, tope 256."""
+    return [min(hp["base_channels"] * (2 ** i), 256) for i in range(hp["n_conv_layers"])]
 
 
 def get_model_path(etnia: str) -> str:
@@ -59,32 +89,26 @@ def make_tf_dataset(dataframe, shuffle=False, augment=False):
     return ds.prefetch(tf.data.AUTOTUNE)
 
 
-def build_model():
-    model = tf.keras.Sequential([
-        tf.keras.layers.Input(shape=(IMG_SIZE, IMG_SIZE, 3)),
-        tf.keras.layers.Conv2D(16, 3, padding="same", use_bias=False),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Activation("relu"),
-        tf.keras.layers.MaxPooling2D(),
-        tf.keras.layers.Conv2D(32, 3, padding="same", use_bias=False),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Activation("relu"),
-        tf.keras.layers.MaxPooling2D(),
-        tf.keras.layers.Conv2D(64, 3, padding="same", use_bias=False),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Activation("relu"),
-        tf.keras.layers.MaxPooling2D(),
-        tf.keras.layers.Conv2D(128, 3, padding="same", use_bias=False),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Activation("relu"),
-        tf.keras.layers.MaxPooling2D(),
-        tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(128, activation="relu"),
-        tf.keras.layers.Dropout(0.3),
-        tf.keras.layers.Dense(len(CLASS_NAMES), activation="softmax"),
-    ])
+def build_model(channels=None, lr=1e-3, dropout=0.3):
+    """CNN con N bloques conv configurables por Optuna (canales por bloque) + learning rate.
+    Sin argumentos reproduce la arquitectura original (16,32,64,128) con lr=1e-3.
+    """
+    channels = channels if channels is not None else [16, 32, 64, 128]
+    if IMG_SIZE // (2 ** len(channels)) < 1:
+        raise ValueError(f"Demasiados bloques conv para IMG_SIZE={IMG_SIZE}: el mapa de features llega a 0.")
+
+    model = tf.keras.Sequential([tf.keras.layers.Input(shape=(IMG_SIZE, IMG_SIZE, 3))])
+    for out_ch in channels:
+        model.add(tf.keras.layers.Conv2D(out_ch, 3, padding="same", use_bias=False))
+        model.add(tf.keras.layers.BatchNormalization())
+        model.add(tf.keras.layers.Activation("relu"))
+        model.add(tf.keras.layers.MaxPooling2D())
+    model.add(tf.keras.layers.Flatten())
+    model.add(tf.keras.layers.Dense(128, activation="relu"))
+    model.add(tf.keras.layers.Dropout(dropout))
+    model.add(tf.keras.layers.Dense(len(CLASS_NAMES), activation="softmax"))
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
         loss="sparse_categorical_crossentropy",
         metrics=["accuracy"],
     )
@@ -99,13 +123,15 @@ def main(etnia: str = "all"):
     val_ds = make_tf_dataset(val_df)
     test_ds = make_tf_dataset(test_df)
 
-    model = build_model()
+    hp = load_hparams(verbose=True)
+    model = build_model(channels=channels_from_hparams(hp), lr=hp["lr"])
     model.summary()
 
     t0 = time.time()
     history = model.fit(train_ds, validation_data=val_ds, epochs=EPOCHS)
     print(f"\nTiempo total de entrenamiento (Keras): {time.time() - t0:.2f} segundos")
 
+    os.makedirs(FIGURAS_DIR, exist_ok=True)
     # Curvas de entrenamiento.
     fig, axes = plt.subplots(1, 2, figsize=(11, 4))
     axes[0].plot(history.history["accuracy"], label="train")
@@ -114,7 +140,10 @@ def main(etnia: str = "all"):
     axes[1].plot(history.history["loss"], label="train")
     axes[1].plot(history.history["val_loss"], label="val")
     axes[1].set_title("Loss"); axes[1].legend()
-    plt.show()
+    plt.tight_layout()
+    # plt.show()  # desactivado en esta corrida: se guarda en figuras/ para no bloquear el pipeline
+    plt.savefig(os.path.join(FIGURAS_DIR, f"keras_curvas_{etnia}.png"), dpi=120)
+    plt.close()
 
     # --- Evaluación en test (el modelo ya entrega softmax) ---
     probs, y_true = [], []
@@ -127,7 +156,10 @@ def main(etnia: str = "all"):
     print(classification_report(y_true, y_pred, target_names=CLASS_NAMES))
     ConfusionMatrixDisplay(confusion_matrix(y_true, y_pred), display_labels=CLASS_NAMES).plot()
     plt.title(f"Matriz de confusión — TensorFlow/Keras (etnia: {etnia})")
-    plt.show()
+    plt.tight_layout()
+    # plt.show()  # desactivado en esta corrida: se guarda en figuras/ para no bloquear el pipeline
+    plt.savefig(os.path.join(FIGURAS_DIR, f"keras_confusion_{etnia}.png"), dpi=120)
+    plt.close()
 
     # Curva ROC multiclase One-vs-Rest + micro-promedio.
     n_classes = len(CLASS_NAMES)
@@ -145,7 +177,9 @@ def main(etnia: str = "all"):
     plt.title(f"Curva ROC multiclase — TensorFlow/Keras (etnia: {etnia})")
     plt.legend(loc="lower right", fontsize=8)
     plt.tight_layout()
-    plt.show()
+    # plt.show()  # desactivado en esta corrida: se guarda en figuras/ para no bloquear el pipeline
+    plt.savefig(os.path.join(FIGURAS_DIR, f"keras_roc_{etnia}.png"), dpi=120)
+    plt.close()
 
     model_path = get_model_path(etnia)
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
