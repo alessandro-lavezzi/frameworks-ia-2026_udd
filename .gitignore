@@ -14,10 +14,7 @@ models/*
 !models/optuna_pareto_pytorch.json
 !models/optuna_pareto_keras.json
 
-<<<<<<< HEAD
 CLAUDE.md__pycache__/
 *.pyc
-=======
 CLAUDE.md
 figuras/
->>>>>>> ale
